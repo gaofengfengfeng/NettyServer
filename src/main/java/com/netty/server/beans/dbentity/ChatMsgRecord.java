@@ -15,6 +15,24 @@ public class ChatMsgRecord {
     private Long updateTime;
     private Integer isGroupChat;
     private String content;
+    private String topic;
+    private Long msgTimestamp; // 和topic组成标识一条消息的唯一标识，时间戳ms
+    private Integer msgType; // 消息类型 0：未使用 1：文本 2：图片 3：语音 4：视频
+    private Integer status; // 状态 0：未使用 1：已发送 2：已送达 3：已读
+
+    public ChatMsgRecord() {
+        this.spokerId = 0L;
+        this.spokerName = "";
+        this.receiverId = 0L;
+        this.receiverName = "";
+        this.createTime = System.currentTimeMillis();
+        this.isGroupChat = 0;
+        this.content = "";
+        this.topic = "";
+        this.msgTimestamp = 0L;
+        this.msgType = 0;
+        this.status = 0;
+    }
 
     public Long getId() {
         return id;
@@ -86,5 +104,37 @@ public class ChatMsgRecord {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public String getTopic() {
+        return topic;
+    }
+
+    public void setTopic(String topic) {
+        this.topic = topic;
+    }
+
+    public Long getMsgTimestamp() {
+        return msgTimestamp;
+    }
+
+    public void setMsgTimestamp(Long msgTimestamp) {
+        this.msgTimestamp = msgTimestamp;
+    }
+
+    public Integer getMsgType() {
+        return msgType;
+    }
+
+    public void setMsgType(Integer msgType) {
+        this.msgType = msgType;
+    }
+
+    public Integer getStatus() {
+        return status;
+    }
+
+    public void setStatus(Integer status) {
+        this.status = status;
     }
 }

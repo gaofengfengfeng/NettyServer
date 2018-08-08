@@ -10,6 +10,8 @@ public class ChatPublishMsg {
     private String content;
     private String username;
     private boolean isSelf;
+    private Long msgTimestamp;
+    private Integer msgType;
 
     public String getContent() {
         return content;
@@ -33,5 +35,29 @@ public class ChatPublishMsg {
 
     public void setIsSelf(boolean isSelf) {
         this.isSelf = isSelf;
+    }
+
+    public boolean isSelf() {
+        return isSelf;
+    }
+
+    public void setSelf(boolean self) {
+        isSelf = self;
+    }
+
+    public Long getMsgTimestamp() {
+        return msgTimestamp;
+    }
+
+    public void setMsgTimestamp(Long msgTimestamp) {
+        this.msgTimestamp = msgTimestamp;
+    }
+
+    public Integer getMsgType() {
+        return msgType;
+    }
+
+    public void setMsgType(Integer msgType) {
+        this.msgType = msgType;
     }
 }

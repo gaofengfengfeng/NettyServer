@@ -17,6 +17,7 @@ import com.netty.server.beans.mqtt.MqttConnAck;
 import com.netty.server.beans.mqtt.MqttPingResp;
 import com.netty.server.beans.mqtt.MqttPublish;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.logging.java.JavaLoggingSystem;
 import org.springframework.stereotype.Component;
 import io.netty.channel.ChannelHandler.Sharable;
 
@@ -102,7 +103,11 @@ public class WebsocketHandler extends SimpleChannelInboundHandler<MqttMessage> {
         }
         channels.add(ctx.channel());
         topicChannel.put(mqttTopicSubscription.topicName(), channels);
+
+        processHistoryMsg(ctx, channelUser.get(ctx.channel()), mqttTopicSubscription.topicName());
+
         System.out.println("processSubscribeMsg success");
+
     }
 
     /**
@@ -120,6 +125,26 @@ public class WebsocketHandler extends SimpleChannelInboundHandler<MqttMessage> {
         Charset utf8 = Charset.forName("UTF-8");
         String msg = mqttPublishMessage.payload().toString(utf8);
         System.out.println(msg);
+
+        Long msgTimestamp = System.currentTimeMillis();
+        // 入库
+        ChatMsgRecord chatMsgRecord = new ChatMsgRecord();
+        chatMsgRecord.setSpokerId(1L);
+        chatMsgRecord.setSpokerName(channelUser.get(ctx.channel()));
+        chatMsgRecord.setReceiverId(2L);
+        chatMsgRecord.setReceiverName(getReceiverName(topic));
+        chatMsgRecord.setIsGroupChat(0);
+        chatMsgRecord.setContent(msg);
+        chatMsgRecord.setMsgTimestamp(msgTimestamp);
+        chatMsgRecord.setTopic(getComplianceTopic(topic));
+        chatMsgRecord.setStatus(1);
+        chatMsgRecord.setMsgType(1);
+        try {
+            chatMsgRecordService.insertChatMsgRecord(chatMsgRecord);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
         List<Channel> channels = topicChannel.get(getComplianceTopic(topic));
         if (channels != null) {
             for (Channel channel : channels) {
@@ -128,23 +153,9 @@ public class WebsocketHandler extends SimpleChannelInboundHandler<MqttMessage> {
                 ChatPublishMsg.setContent(msg);
                 ChatPublishMsg.setUsername(channelUser.get(ctx.channel()));
                 ChatPublishMsg.setIsSelf(ctx.channel().equals(channel));
+                ChatPublishMsg.setMsgTimestamp(msgTimestamp);
+                ChatPublishMsg.setMsgType(1);
                 String jsonStr = JSON.toJSONString(ChatPublishMsg);
-
-                // 入库
-                ChatMsgRecord chatMsgRecord = new ChatMsgRecord();
-                chatMsgRecord.setSpokerId(1L);
-                chatMsgRecord.setSpokerName(channelUser.get(ctx.channel()));
-                chatMsgRecord.setReceiverId(2L);
-                chatMsgRecord.setReceiverName(channelUser.get(channel));
-                chatMsgRecord.setCreateTime(System.currentTimeMillis());
-                chatMsgRecord.setIsGroupChat(0);
-                chatMsgRecord.setContent(msg);
-                try {
-                    chatMsgRecordService.insertChatMsgRecord(chatMsgRecord);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-
 
                 // 将发送的消息push给订阅者
                 channel.writeAndFlush(new MqttPublish().mqttPubish(topic, msgId, jsonStr));
@@ -163,6 +174,45 @@ public class WebsocketHandler extends SimpleChannelInboundHandler<MqttMessage> {
         String newTopic = topic.substring(0, topic.lastIndexOf("/")) + "/+";
         System.out.println("newTopic=" + newTopic);
         return newTopic;
+    }
+
+    /**
+     * publish消息时，获得接受人的名字
+     *
+     * @param topic
+     *
+     * @return
+     */
+    public String getReceiverName(String topic) {
+        String[] parsedTopic = topic.split("/");
+        String receiverName = parsedTopic[parsedTopic.length - 2];
+        return receiverName;
+    }
+
+    /**
+     * 处理将历史消息发送给新订阅者
+     *
+     * @param ctx
+     * @param receiverName
+     * @param topic
+     *
+     * @return
+     */
+    public boolean processHistoryMsg(ChannelHandlerContext ctx, String receiverName, String topic) {
+        System.out.println("processHistoryMsg receiverName=" + receiverName + " topic=" + topic);
+        List<ChatMsgRecord> chatMsgRecords = chatMsgRecordService.getHistoryMsg(receiverName, topic);
+        if (chatMsgRecords.size() != 0) {
+            // 构造需要发送给接收端的对象，并转化成json字符串
+            ChatPublishMsg ChatPublishMsg = new ChatPublishMsg();
+            ChatPublishMsg.setContent(chatMsgRecords.get(0).getContent());
+            ChatPublishMsg.setUsername(chatMsgRecords.get(0).getSpokerName());
+            ChatPublishMsg.setIsSelf(false);
+            ChatPublishMsg.setMsgTimestamp(chatMsgRecords.get(0).getMsgTimestamp());
+            ChatPublishMsg.setMsgType(1);
+            String jsonStr = JSON.toJSONString(ChatPublishMsg);
+            ctx.channel().writeAndFlush(new MqttPublish().mqttPubish(topic, 0, jsonStr));
+        }
+        return true;
     }
 
     /**
