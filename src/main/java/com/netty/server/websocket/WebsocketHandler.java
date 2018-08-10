@@ -17,7 +17,6 @@ import com.netty.server.beans.mqtt.MqttConnAck;
 import com.netty.server.beans.mqtt.MqttPingResp;
 import com.netty.server.beans.mqtt.MqttPublish;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.logging.java.JavaLoggingSystem;
 import org.springframework.stereotype.Component;
 import io.netty.channel.ChannelHandler.Sharable;
 
@@ -30,9 +29,11 @@ import java.util.concurrent.ConcurrentHashMap;
 @Sharable
 public class WebsocketHandler extends SimpleChannelInboundHandler<MqttMessage> {
 
-    private static ConcurrentHashMap<String, Channel> userChannel = new ConcurrentHashMap<String, Channel>();
+    private static ConcurrentHashMap<String, Channel> userChannel = new ConcurrentHashMap<String,
+            Channel>();
     private static ConcurrentHashMap<Channel, String> channelUser = new ConcurrentHashMap<>();
-    private static ConcurrentHashMap<String, List<Channel>> topicChannel = new ConcurrentHashMap<>();
+    private static ConcurrentHashMap<String, List<Channel>> topicChannel =
+            new ConcurrentHashMap<>();
 
     @Autowired
     private ChatMsgRecordService chatMsgRecordService;
@@ -95,7 +96,8 @@ public class WebsocketHandler extends SimpleChannelInboundHandler<MqttMessage> {
      */
     private void processSubscribeMsg(ChannelHandlerContext ctx, MqttMessage mqttMessage) {
         MqttSubscribeMessage mqttSubscribeMessage = (MqttSubscribeMessage) mqttMessage;
-        MqttTopicSubscription mqttTopicSubscription = mqttSubscribeMessage.payload().topicSubscriptions().get(0);
+        MqttTopicSubscription mqttTopicSubscription =
+                mqttSubscribeMessage.payload().topicSubscriptions().get(0);
         System.out.println("doSubscribeMessage topic=" + mqttTopicSubscription.topicName());
         List<Channel> channels = topicChannel.get(mqttTopicSubscription.topicName());
         if (channels == null) {
@@ -124,43 +126,74 @@ public class WebsocketHandler extends SimpleChannelInboundHandler<MqttMessage> {
         System.out.println("doPublishMessage topic=" + topic);
         Charset utf8 = Charset.forName("UTF-8");
         String msg = mqttPublishMessage.payload().toString(utf8);
-        System.out.println(msg);
-
-        Long msgTimestamp = System.currentTimeMillis();
-        // 入库
-        ChatMsgRecord chatMsgRecord = new ChatMsgRecord();
-        chatMsgRecord.setSpokerId(1L);
-        chatMsgRecord.setSpokerName(channelUser.get(ctx.channel()));
-        chatMsgRecord.setReceiverId(2L);
-        chatMsgRecord.setReceiverName(getReceiverName(topic));
-        chatMsgRecord.setIsGroupChat(0);
-        chatMsgRecord.setContent(msg);
-        chatMsgRecord.setMsgTimestamp(msgTimestamp);
-        chatMsgRecord.setTopic(getComplianceTopic(topic));
-        chatMsgRecord.setStatus(1);
-        chatMsgRecord.setMsgType(1);
+        ChatPublishMsg chatPublishMsg = null;
         try {
-            chatMsgRecordService.insertChatMsgRecord(chatMsgRecord);
+            System.out.println(msg);
+            chatPublishMsg = JSON.parseObject(msg, ChatPublishMsg.class);
+            System.out.println(chatPublishMsg.toString());
         } catch (Exception e) {
             e.printStackTrace();
         }
 
-        List<Channel> channels = topicChannel.get(getComplianceTopic(topic));
-        if (channels != null) {
-            for (Channel channel : channels) {
-                // 构造需要发送给接收端的对象，并转化成json字符串
-                ChatPublishMsg ChatPublishMsg = new ChatPublishMsg();
-                ChatPublishMsg.setContent(msg);
-                ChatPublishMsg.setUsername(channelUser.get(ctx.channel()));
-                ChatPublishMsg.setIsSelf(ctx.channel().equals(channel));
-                ChatPublishMsg.setMsgTimestamp(msgTimestamp);
-                ChatPublishMsg.setMsgType(1);
-                String jsonStr = JSON.toJSONString(ChatPublishMsg);
 
-                // 将发送的消息push给订阅者
-                channel.writeAndFlush(new MqttPublish().mqttPubish(topic, msgId, jsonStr));
-            }
+        switch (chatPublishMsg.getPubMsgType()) {
+            case 1:
+                // 入库
+                ChatMsgRecord chatMsgRecord = new ChatMsgRecord();
+                chatMsgRecord.setSpokerId(1L);
+                chatMsgRecord.setSpokerName(channelUser.get(ctx.channel()));
+                chatMsgRecord.setReceiverId(2L);
+                chatMsgRecord.setReceiverName(getReceiverName(topic));
+                chatMsgRecord.setIsGroupChat(0);
+                chatMsgRecord.setContent(chatPublishMsg.getContent());
+                chatMsgRecord.setMsgTimestamp(chatPublishMsg.getMsgTimestamp());
+                chatMsgRecord.setTopic(getComplianceTopic(topic));
+                chatMsgRecord.setStatus(1);
+                chatMsgRecord.setMsgType(chatPublishMsg.getMsgType());
+                try {
+                    chatMsgRecordService.insertChatMsgRecord(chatMsgRecord);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                List<Channel> channels = topicChannel.get(getComplianceTopic(topic));
+                if (channels != null) {
+                    for (Channel channel : channels) {
+                        // 构造需要发送给接收端的对象，并转化成json字符串
+                        chatPublishMsg.setUsername(channelUser.get(ctx.channel()));
+                        chatPublishMsg.setIsSelf(ctx.channel().equals(channel));
+                        String jsonStr = JSON.toJSONString(chatPublishMsg);
+
+                        // 将发送的消息push给订阅者
+                        channel.writeAndFlush(new MqttPublish().mqttPubish(topic, msgId, jsonStr));
+                    }
+                }
+                break;
+            case 2:
+                System.out.println("message arrived");
+                // 将数据库内聊天记录的状态修改为2 已送达
+                if (chatMsgRecordService.changeChatRecordStatus(chatPublishMsg.getMsgTimestamp(),
+                        2)) {
+                    // 如果发送消息者在线，则需要向其同送消息，通知其该条消息已经送达
+                    ChatMsgRecord chatMsgRecordInDB =
+                            chatMsgRecordService.getChatMsgRecordByUniIden(chatPublishMsg.getMsgTimestamp());
+                    if (chatMsgRecordInDB != null) {
+                        Channel channel = userChannel.get(chatMsgRecordInDB.getSpokerName());
+
+                        channel.writeAndFlush(new MqttPublish().mqttPubish(getComplianceTopic(
+                                chatMsgRecordInDB.getIsGroupChat(),
+                                chatMsgRecordInDB.getSpokerName()), msgId,
+                                JSON.toJSONString(chatPublishMsg)));
+                    }
+                }
+                break;
+            case 3:
+                System.out.println("message read");
+                break;
+            default:
+                System.out.println("default case");
         }
+
     }
 
     /**
@@ -174,6 +207,24 @@ public class WebsocketHandler extends SimpleChannelInboundHandler<MqttMessage> {
         String newTopic = topic.substring(0, topic.lastIndexOf("/")) + "/+";
         System.out.println("newTopic=" + newTopic);
         return newTopic;
+    }
+
+    /**
+     * 根据是够是群聊以及发言者姓名，组合出相应的话题名称，只适用于聊天
+     *
+     * @param isGroupChat
+     * @param spokerName
+     *
+     * @return
+     */
+    private String getComplianceTopic(Integer isGroupChat, String spokerName) {
+        String topic = null;
+        if (isGroupChat.equals(0)) {
+            topic = "/singleChat/" + spokerName + "/+";
+        } else {
+            topic = "/groupChat/" + spokerName + "/+";
+        }
+        return topic;
     }
 
     /**
@@ -200,15 +251,17 @@ public class WebsocketHandler extends SimpleChannelInboundHandler<MqttMessage> {
      */
     public boolean processHistoryMsg(ChannelHandlerContext ctx, String receiverName, String topic) {
         System.out.println("processHistoryMsg receiverName=" + receiverName + " topic=" + topic);
-        List<ChatMsgRecord> chatMsgRecords = chatMsgRecordService.getHistoryMsg(receiverName, topic);
-        if (chatMsgRecords.size() != 0) {
+        List<ChatMsgRecord> chatMsgRecords = chatMsgRecordService.getHistoryMsg(receiverName,
+                topic);
+        for (ChatMsgRecord chatMsgRecord : chatMsgRecords) {
             // 构造需要发送给接收端的对象，并转化成json字符串
             ChatPublishMsg ChatPublishMsg = new ChatPublishMsg();
-            ChatPublishMsg.setContent(chatMsgRecords.get(0).getContent());
-            ChatPublishMsg.setUsername(chatMsgRecords.get(0).getSpokerName());
+            ChatPublishMsg.setContent(chatMsgRecord.getContent());
+            ChatPublishMsg.setUsername(chatMsgRecord.getSpokerName());
             ChatPublishMsg.setIsSelf(false);
-            ChatPublishMsg.setMsgTimestamp(chatMsgRecords.get(0).getMsgTimestamp());
-            ChatPublishMsg.setMsgType(1);
+            ChatPublishMsg.setMsgTimestamp(chatMsgRecord.getMsgTimestamp());
+            ChatPublishMsg.setMsgType(chatMsgRecord.getMsgType());
+            ChatPublishMsg.setPubMsgType(chatMsgRecord.getStatus().equals(1) ? 1 : 2);
             String jsonStr = JSON.toJSONString(ChatPublishMsg);
             ctx.channel().writeAndFlush(new MqttPublish().mqttPubish(topic, 0, jsonStr));
         }

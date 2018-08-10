@@ -1,10 +1,7 @@
 package com.netty.server.mapper;
 
 import com.netty.server.beans.dbentity.ChatMsgRecord;
-import org.apache.ibatis.annotations.Insert;
-import org.apache.ibatis.annotations.Mapper;
-import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.*;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -30,4 +27,10 @@ public interface ChatMsgRecordMapper {
 
     @Select("select * from chatMsgRecord where receiverName=#{receiverName} and topic=#{topic} and status!=3")
     List<ChatMsgRecord> getHistoryMsg(@Param("receiverName") String receiverName, @Param("topic") String topic);
+
+    @Update("update chatMsgRecord set status=#{status} where msgTimestamp=#{msgTimestamp}")
+    Integer changeChatRecordStatus(@Param("msgTimestamp") Long msgTimestamp, @Param("status") Integer status);
+
+    @Select("select * from chatMsgRecord where msgTimestamp=#{msgTimestamp}")
+    List<ChatMsgRecord> findChatMsgRecordByUniqueIdentifier(@Param("msgTimestamp") Long msgTimestamp);
 }
